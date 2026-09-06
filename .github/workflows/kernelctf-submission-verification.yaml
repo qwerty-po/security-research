@@ -39,7 +39,7 @@ env:
 jobs:
   structure_check:
     # if labeling triggered the job then only run in case of the "recheck" label
-    if: github.event.action != 'labeled' || github.event.label.name == 'recheck'
+    if: (github.repository == 'google/security-research' || !inputs.skipRepro) && (github.event.action != 'labeled' || github.event.label.name == 'recheck')
     runs-on: ubuntu-latest
     permissions: {}
     outputs:
