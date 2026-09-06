@@ -39,7 +39,7 @@ env:
 jobs:
   structure_check:
     # if labeling triggered the job then only run in case of the "recheck" label
-    if: (github.repository == 'google/security-research' || !inputs.skipRepro) && (github.event.action != 'labeled' || github.event.label.name == 'recheck')
+    if: github.repository == 'google/security-research' && (github.event.action != 'labeled' || github.event.label.name == 'recheck')
     runs-on: ubuntu-latest
     permissions: {}
     outputs:
@@ -387,7 +387,7 @@ jobs:
       prNumber: ${{ contains(github.event_name, 'workflow_') && inputs.prNumber || github.event.pull_request.number }}
 
   fork_vuln_verify:
-    if: github.repository != 'google/security-research'
+    if: github.repository != 'google/security-research' && inputs.skipRepro
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -493,6 +493,134 @@ jobs:
           fi
           test "$before_rc" -eq 124
           test "$after_rc" -eq 124
+
+  fork_exploit_repro:
+    if: github.repository != 'google/security-research' && inputs.skipRepro == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    env:
+      RELEASE_ID: lts-6.12.89
+      EXPLOIT_INFO: >-
+        {"uses":[],"requires_separate_kaslr_leak":false,"flag_time":"2026-06-05T19:53:29.658Z"}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ./kernelctf/repro
+    steps:
+      - name: Checkout Google reproduction scripts
+        uses: actions/checkout@v6
+        with:
+          repository: google/security-research
+          ref: master
+          sparse-checkout: kernelctf
+
+      - name: Checkout candidate submission
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PR_REF }}
+          path: pr
+          sparse-checkout: pocs/linux/kernelctf/CVE-2026-64560_lts
+          sparse-checkout-cone-mode: true
+          fetch-depth: 1
+
+      - name: Build candidate exploit
+        working-directory: pr/pocs/linux/kernelctf/CVE-2026-64560_lts/exploit/lts-6.12.89
+        run: |
+          make clean
+          make -j2 exploit
+
+      - name: Install candidate exploit
+        run: |
+          mkdir -p exp
+          cp "${{ github.workspace }}/pr/pocs/linux/kernelctf/CVE-2026-64560_lts/exploit/lts-6.12.89/exploit" exp/exploit
+          chmod +x exp/exploit
+
+      - name: Enable KVM group permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install reproduction dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 inotify-tools expect
+
+      - name: Fetch official rootfs and bzImage
+        run: |
+          wget -qO rootfs.img.gz https://storage.googleapis.com/kernelctf-build/files/rootfs_repro_v2.img.gz
+          gzip -d rootfs.img.gz
+          wget -qO bzImage https://storage.googleapis.com/kernelctf-build/releases/lts-6.12.89/bzImage
+
+      - id: repro1
+        name: Reproduction (1 / 10)
+        continue-on-error: true
+        run: ./repro.sh 1
+
+      - id: repro2
+        name: Reproduction (2 / 10)
+        continue-on-error: true
+        run: ./repro.sh 2
+
+      - id: repro3
+        name: Reproduction (3 / 10)
+        continue-on-error: true
+        run: ./repro.sh 3
+
+      - id: repro4
+        name: Reproduction (4 / 10)
+        continue-on-error: true
+        run: ./repro.sh 4
+
+      - id: repro5
+        name: Reproduction (5 / 10)
+        continue-on-error: true
+        run: ./repro.sh 5
+
+      - id: repro6
+        name: Reproduction (6 / 10)
+        continue-on-error: true
+        run: ./repro.sh 6
+
+      - id: repro7
+        name: Reproduction (7 / 10)
+        continue-on-error: true
+        run: ./repro.sh 7
+
+      - id: repro8
+        name: Reproduction (8 / 10)
+        continue-on-error: true
+        run: ./repro.sh 8
+
+      - id: repro9
+        name: Reproduction (9 / 10)
+        continue-on-error: true
+        run: ./repro.sh 9
+
+      - id: repro10
+        name: Reproduction (10 / 10)
+        continue-on-error: true
+        run: ./repro.sh 10
+
+      - name: Reproduction summary and 90% gate
+        env:
+          STEPS: ${{ toJSON(steps) }}
+        run: |
+          echo "$STEPS" > steps.json
+          ../repro_summary.py ${{ github.run_id }}
+          success_count=$(jq '[to_entries[] | select(.key | startswith("repro")) | select(.value.outcome == "success")] | length' steps.json)
+          test "$success_count" -ge 9
+
+      - name: Upload reproduction logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cve-2026-64560-fork-repro-${{ github.run_id }}
+          path: |
+            kernelctf/repro/repro_log_*.txt
+            kernelctf/repro/repro_summary.md
 
   backup_artifacts:
     runs-on: ubuntu-latest
