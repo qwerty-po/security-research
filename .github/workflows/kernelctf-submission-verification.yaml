@@ -436,7 +436,8 @@ jobs:
           pip install requests
 
       - name: Restore fork-built KASAN kernels
-        uses: actions/cache@v4
+        id: kasan-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             kernelctf/vuln-verify/builds/cve64560_before_bzImage
@@ -462,6 +463,15 @@ jobs:
             cp linux/arch/x86/boot/bzImage builds/cve64560_after_bzImage
           fi
           sha256sum builds/cve64560_before_bzImage builds/cve64560_after_bzImage
+
+      - name: Save fork-built KASAN kernels
+        if: steps.kasan-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            kernelctf/vuln-verify/builds/cve64560_before_bzImage
+            kernelctf/vuln-verify/builds/cve64560_after_bzImage
+          key: ${{ steps.kasan-cache.outputs.cache-primary-key }}
 
       - name: Run exact KASAN positive and negative tests
         working-directory: kernelctf/vuln-verify
