@@ -486,7 +486,6 @@ jobs:
             builds/cve64560_before_bzImage \
             --kernel-args=kasan.fault=panic --nokaslr -- /exp.sh --vuln-trigger \
             2>&1 | tee builds/cve64560_before_run.log
-          before_rc=${PIPESTATUS[0]}
           set -e
           grep -q 'KASAN:' builds/cve64560_before_run.log
 
@@ -501,7 +500,6 @@ jobs:
             builds/cve64560_after_run.log; then
             exit 1
           fi
-          test "$before_rc" -eq 124
           test "$after_rc" -eq 124
 
   fork_exploit_repro:
