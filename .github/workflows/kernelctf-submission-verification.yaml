@@ -390,7 +390,6 @@ jobs:
     if: github.repository != 'google/security-research'
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: structure_check
     permissions:
       actions: write
       contents: read
@@ -436,18 +435,64 @@ jobs:
           sudo apt-get install -y expect build-essential flex bison bc libelf-dev libssl-dev cpio pahole qemu-system-x86
           pip install requests
 
-      - name: Restore locally built KASAN kernels
+      - name: Restore fork-built KASAN kernels
         uses: actions/cache@v4
         with:
           path: |
-            kernelctf/vuln-verify/builds/*_bzImage
-            kernelctf/vuln-verify/builds/*.config
+            kernelctf/vuln-verify/builds/cve64560_before_bzImage
+            kernelctf/vuln-verify/builds/cve64560_after_bzImage
           key: cve-2026-64560-stable-kasan-720e8bc-e74443f-${{ runner.os }}-${{ runner.arch }}-v1
 
-      - name: Run public stable KASAN verification
+      - name: Build stable KASAN pair from public sources
+        working-directory: kernelctf/vuln-verify
         run: |
-          ./kernelctf/vuln-verify/verify.py --verbose-build --no-gcs-cache --no-upstream \
-            pr/pocs/linux/kernelctf/CVE-2026-64560_lts
+          mkdir -p builds
+          wget -qO builds/lts-6.12.89.config \
+            https://storage.googleapis.com/kernelctf-build/releases/lts-6.12.89/.config
+          if [ ! -f builds/cve64560_before_bzImage ]; then
+            ./build_release.sh https://github.com/gregkh/linux \
+              720e8bcaa674dfa40b989207d6cdb44b3aaa8db6 \
+              builds/lts-6.12.89.config kasan.config
+            cp linux/arch/x86/boot/bzImage builds/cve64560_before_bzImage
+          fi
+          if [ ! -f builds/cve64560_after_bzImage ]; then
+            ./build_release.sh https://github.com/gregkh/linux \
+              e74443f5db0037c556ef436fa64b88bf4ea08f83 \
+              builds/lts-6.12.89.config kasan.config
+            cp linux/arch/x86/boot/bzImage builds/cve64560_after_bzImage
+          fi
+          sha256sum builds/cve64560_before_bzImage builds/cve64560_after_bzImage
+
+      - name: Run exact KASAN positive and negative tests
+        working-directory: kernelctf/vuln-verify
+        run: |
+          cp -a rootfs/. "$IMAGE_RUNNER_DIR/rootfs/"
+          cp "${{ github.workspace }}/pr/pocs/linux/kernelctf/CVE-2026-64560_lts/exploit/lts-6.12.89/exploit" \
+            "$IMAGE_RUNNER_DIR/rootfs/exp"
+          chmod +x "$IMAGE_RUNNER_DIR/rootfs/exp"
+
+          set +e
+          timeout 3m "$IMAGE_RUNNER_DIR/run_vmlinuz.sh" \
+            builds/cve64560_before_bzImage \
+            --kernel-args=kasan.fault=panic --nokaslr -- /exp.sh --vuln-trigger \
+            2>&1 | tee builds/cve64560_before_run.log
+          before_rc=${PIPESTATUS[0]}
+          set -e
+          grep -q 'KASAN:' builds/cve64560_before_run.log
+
+          set +e
+          timeout 3m "$IMAGE_RUNNER_DIR/run_vmlinuz.sh" \
+            builds/cve64560_after_bzImage \
+            --kernel-args=kasan.fault=panic --nokaslr -- /exp.sh --vuln-trigger \
+            2>&1 | tee builds/cve64560_after_run.log
+          after_rc=${PIPESTATUS[0]}
+          set -e
+          if grep -Eq 'KASAN:|Kernel panic|WARNING:.*posix_cpu_timer' \
+            builds/cve64560_after_run.log; then
+            exit 1
+          fi
+          test "$before_rc" -eq 124
+          test "$after_rc" -eq 124
 
   backup_artifacts:
     runs-on: ubuntu-latest
