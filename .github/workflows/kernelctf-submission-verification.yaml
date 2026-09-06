@@ -386,6 +386,69 @@ jobs:
     with:
       prNumber: ${{ contains(github.event_name, 'workflow_') && inputs.prNumber || github.event.pull_request.number }}
 
+  fork_vuln_verify:
+    if: github.repository != 'google/security-research'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    needs: structure_check
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      IMAGE_RUNNER_DIR: ${{ github.workspace }}/kernel-research/image_runner
+    steps:
+      - name: Checkout Google verification scripts
+        uses: actions/checkout@v6
+        with:
+          repository: google/security-research
+          ref: master
+          sparse-checkout: kernelctf/vuln-verify
+
+      - name: Checkout candidate submission
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.PR_REF }}
+          path: pr
+          sparse-checkout: pocs/linux/kernelctf/CVE-2026-64560_lts
+          sparse-checkout-cone-mode: true
+          fetch-depth: 1
+
+      - name: Checkout kernel image runner
+        uses: actions/checkout@v6
+        with:
+          repository: google/kernel-research
+          path: kernel-research
+          sparse-checkout: image_runner
+
+      - name: Enable KVM group permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Free runner disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/share/swift /usr/local/share/boost /usr/local/lib/android
+
+      - name: Install verification dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y expect build-essential flex bison bc libelf-dev libssl-dev cpio pahole qemu-system-x86
+          pip install requests
+
+      - name: Restore locally built KASAN kernels
+        uses: actions/cache@v4
+        with:
+          path: |
+            kernelctf/vuln-verify/builds/*_bzImage
+            kernelctf/vuln-verify/builds/*.config
+          key: cve-2026-64560-stable-kasan-720e8bc-e74443f-${{ runner.os }}-${{ runner.arch }}-v1
+
+      - name: Run public stable KASAN verification
+        run: |
+          ./kernelctf/vuln-verify/verify.py --verbose-build --no-gcs-cache --no-upstream \
+            pr/pocs/linux/kernelctf/CVE-2026-64560_lts
+
   backup_artifacts:
     runs-on: ubuntu-latest
     needs: [structure_check, exploit_build, exploit_build_debug, exploit_repro]
