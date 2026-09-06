@@ -11,6 +11,9 @@ on:
       shaHash:
         description: 'SHA hash'
         type: string
+      baseSha:
+        description: 'Base SHA for fork-side CI testing'
+        type: string
       skipRepro:
         description: 'Skip reproduction'
         type: boolean
@@ -23,6 +26,8 @@ on:
         type: number
       shaHash:
         description: 'SHA hash'
+      baseSha:
+        description: 'Base SHA for fork-side CI testing'
       skipRepro:
         description: 'Skip reproduction'
         type: boolean
@@ -48,6 +53,7 @@ jobs:
       - name: Checkout repo content (sparse - only check-submission.py)
         uses: actions/checkout@v6
         with:
+          repository: google/security-research
           ref: master
           sparse-checkout: |
             kernelctf/check-submission.py
@@ -67,7 +73,7 @@ jobs:
         working-directory: pr-content
         run: |
           echo "::stop-commands::$(uuidgen)"
-          ../kernelctf/check-submission.py ${{ github.event.pull_request.base.sha }}
+          ../kernelctf/check-submission.py ${{ contains(github.event_name, 'workflow_') && inputs.baseSha || github.event.pull_request.base.sha }}
 
   exploit_build:
     runs-on: ubuntu-latest
@@ -247,6 +253,7 @@ jobs:
       - name: Checkout repo content (sparse - repro and server only)
         uses: actions/checkout@v6
         with:
+          repository: google/security-research
           ref: master
           sparse-checkout: |
             kernelctf
@@ -372,6 +379,7 @@ jobs:
           path: ./kernelctf/repro/repro_summary.md
 
   vuln_verify:
+    if: github.repository == 'google/security-research'
     uses: ./.github/workflows/kernelctf-vuln-verify.yaml
     needs: structure_check
     secrets: inherit
@@ -381,7 +389,7 @@ jobs:
   backup_artifacts:
     runs-on: ubuntu-latest
     needs: [structure_check, exploit_build, exploit_build_debug, exploit_repro]
-    if: always() && needs.structure_check.result == 'success' && github.event_name != 'workflow_call'
+    if: always() && needs.structure_check.result == 'success' && github.event_name != 'workflow_call' && github.repository == 'google/security-research'
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v7
