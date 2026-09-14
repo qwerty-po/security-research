@@ -134,6 +134,7 @@ if [[ -e "$TRACE_ROOT/trace_pipe" ]]; then
                     print "COS-CHAIN UAF write-path origin=" write_target[vvs] " now=" attempt \
                         " pte_before=" (slab != "" && pte_for_slab[slab] == write_target[vvs]) \
                         " path=" ($0 ~ /uaf_connected:/ ? "connected" : "listen") " vvs=" vvs
+                    print "COS-CHAIN UAF raw " $0
                     fflush()
                 }
             }
