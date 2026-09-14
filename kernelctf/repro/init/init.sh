@@ -58,9 +58,65 @@ if [[ " $* " == *" kaslr_leak=1 "* ]]; then
     CMD="$CMD $KASLR_BASE"
 fi
 
+# Stream the target chain immediately so a kernel panic cannot hide it.
+if [[ -e "$TRACE_ROOT/trace_pipe" ]]; then
+    awk '
+        function value(name, i, parts) {
+            for (i = 1; i <= NF; i++)
+                if (index($i, name "=") == 1) {
+                    split($i, parts, "=")
+                    return parts[2]
+                }
+            return ""
+        }
+        /vsock_reconnect:/ {
+            sk = value("sk")
+            if (sk != "") {
+                target_sk[sk] = 1
+                print "COS-CHAIN reconnect sk=" sk
+                fflush()
+            }
+        }
+        /vvs_destruct:/ {
+            vsk = value("vsk"); vvs = value("vvs")
+            if (vsk in target_sk && vvs != "" && vvs != "0x0") {
+                victim[vvs] = 1
+                print "COS-CHAIN victim vvs=" vvs
+                fflush()
+            }
+        }
+        /slub_free:/ {
+            obj = value("obj"); slab = value("slab")
+            if (obj in victim && slab != "") {
+                victim_slab[slab] = 1
+                print "COS-CHAIN slow-free slab=" slab
+                fflush()
+            }
+        }
+        /slub_discard:/ {
+            slab = value("slab")
+            if (slab in victim_slab) {
+                discarded_victim[slab] = 1
+                print "COS-CHAIN discarded slab=" slab
+                fflush()
+            }
+        }
+        /pte_alloc:/ {
+            page = value("page")
+            if (page in discarded_victim) {
+                print "COS-CHAIN target slab reused as PTE=" page
+                fflush()
+            }
+        }
+        { if (++events % 20000 == 0) { print "COS-CHAIN progress events=" events; fflush() } }
+    ' "$TRACE_ROOT/trace_pipe" &
+    TRACE_PID=$!
+fi
+
 echo "running exploit, cmd='$CMD', ::EXPLOIT OUTPUT FROM HERE::"
 su user -c "$CMD" || true
-if [[ -e "$TRACE_ROOT/trace" ]]; then
+if [[ -n "${TRACE_PID:-}" ]]; then kill "$TRACE_PID" || true; fi
+if [[ -e "$TRACE_ROOT/trace" && -z "${TRACE_PID:-}" ]]; then
     echo 0 > "$TRACE_ROOT/tracing_on"
     awk '
         /vsock_reconnect:/ {
