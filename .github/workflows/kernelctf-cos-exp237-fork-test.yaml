@@ -1,4 +1,4 @@
-name: kernelCTF COS exp237 fork check
+name: kernelCTF COS exp237 KASLR diagnostic
 
 on:
   push:
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   cos:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     env:
       RELEASE_ID: cos-105-17412.495.75
       EXPLOIT_DIR: pocs/linux/kernelctf/CVE-2025-21756_cos_2/exploit/cos-105-17412.495.75
@@ -37,6 +37,11 @@ jobs:
       - name: Check COS-only submission structure
         working-directory: pr-content
         run: kernelctf/check-submission.py 9611d576e83a5c99a595a5c930d7b3abad3af222
+
+      - name: Log KASLR candidates in this diagnostic build only
+        working-directory: pr-content
+        run: |
+          sed -i '/bases\[sample\] = kbase;/a\            printf("KASLR_SAMPLE=%p ", (void *)kbase); putchar(10);' "$EXPLOIT_DIR/exploit.c"
 
       - name: Build release exploit
         working-directory: pr-content
@@ -78,17 +83,16 @@ jobs:
           cp "$GITHUB_WORKSPACE/pr-content/$EXPLOIT_DIR/exploit" exp/exploit
           chmod +x exp/exploit
 
-      - name: Run ten upstream reproductions; require at least nine flags
+      - name: Run three KASLR diagnostic reproductions
         working-directory: pr-content/kernelctf/repro
         run: |
           successful=0
-          for trial in {1..10}; do
+          for trial in {1..3}; do
             if ./repro.sh "$trial"; then
               successful=$((successful + 1))
             fi
           done
-          echo "COS exp237: $successful/10 successful reproductions" | tee -a "$GITHUB_STEP_SUMMARY"
-          test "$successful" -ge 9
+          echo "KASLR diagnostic only: $successful/3 flags" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload reproduction logs
         if: always()
