@@ -20,7 +20,7 @@ jobs:
       - name: Checkout PR-ready branch
         uses: actions/checkout@v6
         with:
-          ref: cve-2025-21756-cos-reopen
+          ref: 726e1ec92c3a88206bfdbb6db47a31f961f1ef6b
           path: pr-content
           fetch-depth: 0
 
