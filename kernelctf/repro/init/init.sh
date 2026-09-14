@@ -49,6 +49,14 @@ if [[ -e "$TRACE_ROOT/kprobe_events" ]]; then
         echo 1 > "$TRACE_ROOT/events/kprobes/slub_free/enable"
         echo 'COS-TRACE slab slow-free probe ready'
     fi
+    if echo 'p:uaf_connected virtio_transport_recv_pkt+0x1ca vvs=%r14:x64' >> "$TRACE_ROOT/kprobe_events"; then
+        echo 1 > "$TRACE_ROOT/events/kprobes/uaf_connected/enable"
+        echo 'COS-TRACE UAF connected-path probe ready'
+    fi
+    if echo 'p:uaf_listen virtio_transport_recv_pkt+0x6ec vvs=%r13:x64' >> "$TRACE_ROOT/kprobe_events"; then
+        echo 1 > "$TRACE_ROOT/events/kprobes/uaf_listen/enable"
+        echo 'COS-TRACE UAF listen-path probe ready'
+    fi
     echo 1 > "$TRACE_ROOT/tracing_on"
 fi
 
@@ -82,6 +90,7 @@ if [[ -e "$TRACE_ROOT/trace_pipe" ]]; then
             vsk = value("vsk"); vvs = value("vvs")
             if (vsk in target_sk && vvs != "" && vvs != "0x0") {
                 victim[vvs] = target_sk[vsk]
+                write_target[vvs] = target_sk[vsk]
                 print "COS-CHAIN victim attempt=" victim[vvs] " vvs=" vvs
                 delete target_sk[vsk]
                 fflush()
@@ -91,6 +100,7 @@ if [[ -e "$TRACE_ROOT/trace_pipe" ]]; then
             obj = value("obj"); slab = value("slab")
             if (obj in victim && slab != "") {
                 victim_slab[slab] = victim[obj]
+                target_slab_by_vvs[obj] = slab
                 print "COS-CHAIN slow-free origin=" victim_slab[slab] " slab=" slab
                 delete victim[obj]
                 fflush()
@@ -108,10 +118,24 @@ if [[ -e "$TRACE_ROOT/trace_pipe" ]]; then
         /pte_alloc:/ {
             page = value("page")
             if (page in discarded_victim) {
+                pte_for_slab[page] = attempt
                 print "COS-CHAIN PTE origin=" discarded_victim[page] " now=" attempt \
                     " same=" (discarded_victim[page] == attempt) " page=" page
                 delete discarded_victim[page]
                 fflush()
+            }
+        }
+        /uaf_connected:|uaf_listen:/ {
+            vvs = value("vvs")
+            if (vvs in write_target) {
+                uaf_count[vvs]++
+                if (uaf_count[vvs] <= 3) {
+                    slab = target_slab_by_vvs[vvs]
+                    print "COS-CHAIN UAF write-path origin=" write_target[vvs] " now=" attempt \
+                        " pte_before=" (slab != "" && pte_for_slab[slab] == write_target[vvs]) \
+                        " path=" ($0 ~ /uaf_connected:/ ? "connected" : "listen") " vvs=" vvs
+                    fflush()
+                }
             }
         }
         { if (++events % 20000 == 0) { print "COS-CHAIN progress events=" events; fflush() } }
