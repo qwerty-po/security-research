@@ -15,6 +15,10 @@ concurrency:
 jobs:
   cos:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     timeout-minutes: 15
     env:
       RELEASE_ID: cos-105-17412.495.75
@@ -96,6 +100,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: cos-exp237-repro-logs
+          name: cos-exp237-kaslr-diagnostic-${{ matrix.shard }}
           path: pr-content/kernelctf/repro/repro_log_*.txt
           if-no-files-found: warn
