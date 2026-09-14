@@ -1,0 +1,95 @@
+name: kernelCTF COS exp237 fork check
+
+on:
+  push:
+    branches:
+      - cve-2025-21756-cos-ci-test
+
+permissions:
+  contents: read
+
+jobs:
+  cos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RELEASE_ID: cos-105-17412.495.75
+      EXPLOIT_DIR: pocs/linux/kernelctf/CVE-2025-21756_cos_2/exploit/cos-105-17412.495.75
+      EXPLOIT_INFO: '{"uses":[],"requires_separate_kaslr_leak":false,"flag_time":"2025-01-17T08:54:30.881Z"}'
+    steps:
+      - name: Checkout PR-ready branch
+        uses: actions/checkout@v6
+        with:
+          ref: cve-2025-21756-cos-reopen
+          path: pr-content
+          fetch-depth: 0
+
+      - name: Install build and reproduction dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libkeyutils-dev qemu-system-x86 inotify-tools expect
+          pip install -U jsonschema requests
+
+      - name: Check COS-only submission structure
+        working-directory: pr-content
+        run: kernelctf/check-submission.py 9611d576e83a5c99a595a5c930d7b3abad3af222
+
+      - name: Build release exploit
+        working-directory: pr-content
+        run: |
+          mv "$EXPLOIT_DIR/exploit" "$RUNNER_TEMP/original-exploit"
+          if make -n -C "$EXPLOIT_DIR" prerequisites; then
+            make -C "$EXPLOIT_DIR" prerequisites
+          fi
+          make -C "$EXPLOIT_DIR" exploit
+          file "$EXPLOIT_DIR/exploit"
+
+      - name: Build debug exploit as upstream does
+        working-directory: pr-content
+        run: |
+          cp -a "$EXPLOIT_DIR" "$RUNNER_TEMP/cos-debug"
+          cd "$RUNNER_TEMP/cos-debug"
+          sed -i -E 's/([a-zA-Z0-9_-]*)(gcc|g\+\+|clang)(\s)/\1\2 -g\3/g' Makefile
+          sed -i '/configure --enable-debug/!s/configure/configure --enable-debug/g' Makefile
+          sed -i 's/-o exploit\b/-o exploit_debug/g' Makefile
+          sed -i 's/ -s\b//g' Makefile
+          sed -i 's/exploit:/exploit_debug:/g' Makefile
+          sed -i 's/all: exploit$/all: exploit_debug/g' Makefile
+          make exploit_debug
+          file exploit_debug | grep debug_info
+
+      - name: Enable KVM group permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Fetch the same COS image and rootfs as upstream
+        working-directory: pr-content/kernelctf/repro
+        run: |
+          wget -O rootfs.img.gz https://storage.googleapis.com/kernelctf-build/files/rootfs_repro_v2.img.gz
+          gzip -d rootfs.img.gz
+          wget -O bzImage https://storage.googleapis.com/kernelctf-build/releases/$RELEASE_ID/bzImage
+          mkdir -p exp
+          cp "$GITHUB_WORKSPACE/pr-content/$EXPLOIT_DIR/exploit" exp/exploit
+          chmod +x exp/exploit
+
+      - name: Run ten upstream reproductions; require at least nine flags
+        working-directory: pr-content/kernelctf/repro
+        run: |
+          successful=0
+          for trial in {1..10}; do
+            if ./repro.sh "$trial"; then
+              successful=$((successful + 1))
+            fi
+          done
+          echo "COS exp237: $successful/10 successful reproductions" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$successful" -ge 9
+
+      - name: Upload reproduction logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: cos-exp237-repro-logs
+          path: pr-content/kernelctf/repro/repro_log_*.txt
+          if-no-files-found: warn
