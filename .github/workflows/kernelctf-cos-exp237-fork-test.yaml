@@ -8,10 +8,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: cos-exp237-fork-check
+  cancel-in-progress: true
+
 jobs:
   cos:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 30
     env:
       RELEASE_ID: cos-105-17412.495.75
       EXPLOIT_DIR: pocs/linux/kernelctf/CVE-2025-21756_cos_2/exploit/cos-105-17412.495.75
@@ -20,7 +24,7 @@ jobs:
       - name: Checkout PR-ready branch
         uses: actions/checkout@v6
         with:
-          ref: 726e1ec92c3a88206bfdbb6db47a31f961f1ef6b
+          ref: 65b910b108fb8b9d78263e8f3fa0a28a064ee25a
           path: pr-content
           fetch-depth: 0
 
