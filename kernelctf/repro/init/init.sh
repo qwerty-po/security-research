@@ -72,39 +72,45 @@ if [[ -e "$TRACE_ROOT/trace_pipe" ]]; then
         /vsock_reconnect:/ {
             sk = value("sk")
             if (sk != "") {
-                target_sk[sk] = 1
-                print "COS-CHAIN reconnect sk=" sk
+                attempt++
+                target_sk[sk] = attempt
+                print "COS-CHAIN reconnect attempt=" attempt " sk=" sk
                 fflush()
             }
         }
         /vvs_destruct:/ {
             vsk = value("vsk"); vvs = value("vvs")
             if (vsk in target_sk && vvs != "" && vvs != "0x0") {
-                victim[vvs] = 1
-                print "COS-CHAIN victim vvs=" vvs
+                victim[vvs] = target_sk[vsk]
+                print "COS-CHAIN victim attempt=" victim[vvs] " vvs=" vvs
+                delete target_sk[vsk]
                 fflush()
             }
         }
         /slub_free:/ {
             obj = value("obj"); slab = value("slab")
             if (obj in victim && slab != "") {
-                victim_slab[slab] = 1
-                print "COS-CHAIN slow-free slab=" slab
+                victim_slab[slab] = victim[obj]
+                print "COS-CHAIN slow-free origin=" victim_slab[slab] " slab=" slab
+                delete victim[obj]
                 fflush()
             }
         }
         /slub_discard:/ {
             slab = value("slab")
             if (slab in victim_slab) {
-                discarded_victim[slab] = 1
-                print "COS-CHAIN discarded slab=" slab
+                discarded_victim[slab] = victim_slab[slab]
+                print "COS-CHAIN discarded origin=" discarded_victim[slab] " now=" attempt " slab=" slab
+                delete victim_slab[slab]
                 fflush()
             }
         }
         /pte_alloc:/ {
             page = value("page")
             if (page in discarded_victim) {
-                print "COS-CHAIN target slab reused as PTE=" page
+                print "COS-CHAIN PTE origin=" discarded_victim[page] " now=" attempt \
+                    " same=" (discarded_victim[page] == attempt) " page=" page
+                delete discarded_victim[page]
                 fflush()
             }
         }
