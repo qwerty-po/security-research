@@ -57,6 +57,14 @@ if [[ -e "$TRACE_ROOT/kprobe_events" ]]; then
         echo 1 > "$TRACE_ROOT/events/kprobes/uaf_listen/enable"
         echo 'COS-TRACE UAF listen-path probe ready'
     fi
+    if echo 'p:uaf_write_connected virtio_transport_recv_pkt+0x1ef vvs=%r14:x64 val=%ax:u32' >> "$TRACE_ROOT/kprobe_events"; then
+        echo 1 > "$TRACE_ROOT/events/kprobes/uaf_write_connected/enable"
+        echo 'COS-TRACE UAF connected write-value probe ready'
+    fi
+    if echo 'p:uaf_write_listen virtio_transport_recv_pkt+0x701 vvs=%r13:x64 val=%ax:u32' >> "$TRACE_ROOT/kprobe_events"; then
+        echo 1 > "$TRACE_ROOT/events/kprobes/uaf_write_listen/enable"
+        echo 'COS-TRACE UAF listen write-value probe ready'
+    fi
     echo 1 > "$TRACE_ROOT/tracing_on"
 fi
 
@@ -121,6 +129,7 @@ if [[ -e "$TRACE_ROOT/trace_pipe" ]]; then
                 pte_for_slab[page] = attempt
                 print "COS-CHAIN PTE origin=" discarded_victim[page] " now=" attempt \
                     " same=" (discarded_victim[page] == attempt) " page=" page
+                if (discarded_victim[page] == attempt) print "COS-CHAIN PTE raw " $0
                 delete discarded_victim[page]
                 fflush()
             }
@@ -135,6 +144,21 @@ if [[ -e "$TRACE_ROOT/trace_pipe" ]]; then
                         " pte_before=" (slab != "" && pte_for_slab[slab] == write_target[vvs]) \
                         " path=" ($0 ~ /uaf_connected:/ ? "connected" : "listen") " vvs=" vvs
                     print "COS-CHAIN UAF raw " $0
+                    fflush()
+                }
+            }
+        }
+        /uaf_write_connected:|uaf_write_listen:/ {
+            vvs = value("vvs")
+            if (vvs in write_target) {
+                store_count[vvs]++
+                if (store_count[vvs] <= 3) {
+                    slab = target_slab_by_vvs[vvs]
+                    print "COS-CHAIN STORE origin=" write_target[vvs] " now=" attempt \
+                        " val=" value("val") \
+                        " pte_before=" (slab != "" && pte_for_slab[slab] == write_target[vvs]) \
+                        " path=" ($0 ~ /uaf_write_connected:/ ? "connected" : "listen")
+                    print "COS-CHAIN STORE raw " $0
                     fflush()
                 }
             }
